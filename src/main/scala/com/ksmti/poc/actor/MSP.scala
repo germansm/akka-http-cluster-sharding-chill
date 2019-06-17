@@ -23,13 +23,9 @@ import com.ksmti.poc.actor.PublicEventEntity.{
 }
 import org.joda.time.DateTime
 
-trait RequestMessage
-
-trait ResponseMessage
-
 object MSP {
 
-  object ConsultProgram extends RequestMessage
+  case class ConsultProgram(msp: String) extends RoutedRequest
 
   case class EventsProgram(program: Seq[PublicEvent],
                            timeStamp: Option[String] = None)
@@ -39,9 +35,10 @@ object MSP {
     }
   }
 
-  case class StockRequest(event: String) extends RequestMessage
+  case class StockRequest(msp: String, event: String) extends RoutedRequest
 
-  case class ReservationRequest(entityID: String) extends RequestMessage
+  case class ReservationRequest(msp: String, entityID: String, seats: Int = 1)
+      extends RoutedRequest
 }
 
 class MSPWorkerActor(program: EventsProgram) extends Actor with ActorLogging {
@@ -57,7 +54,7 @@ class MSPWorkerActor(program: EventsProgram) extends Actor with ActorLogging {
   }
 
   override def receive: Receive = {
-    case ConsultProgram ⇒
+    case _: ConsultProgram ⇒
       sender() ! program.stamp
       self ! PoisonPill
   }
@@ -80,11 +77,11 @@ class MSP(name: String) extends Actor with ActorLogging {
     entityProps = Props[PublicEventEntity],
     settings = ClusterShardingSettings(context.system),
     extractEntityId = {
-      case StockRequest(id) ⇒
+      case StockRequest(_, id) ⇒
         (PublicEventsDirectory.idGenerator(id), PublicEventStock)
 
-      case ReservationRequest(id) ⇒
-        (PublicEventsDirectory.idGenerator(id), SeatsReservation)
+      case ReservationRequest(_, id, seats) ⇒
+        (PublicEventsDirectory.idGenerator(id), SeatsReservation(seats))
     },
     extractShardId = { _ ⇒
       // see https://manuel.bernhardt.io/2018/02/26/tour-akka-cluster-cluster-sharding/
@@ -93,16 +90,13 @@ class MSP(name: String) extends Actor with ActorLogging {
   )
 
   override def receive: Receive = {
-    case ConsultProgram ⇒
+    case msg: ConsultProgram ⇒
       log.info("MSP[{}] received a ConsultProgram Request at [{}]",
                name,
                DateTime.now)
-      worker.forward(ConsultProgram)
+      worker.forward(msg)
 
-    case msg: ReservationRequest ⇒
-      sharding.forward(msg)
-
-    case msg: StockRequest ⇒
+    case msg: RequestMessage ⇒
       sharding.forward(msg)
   }
 }

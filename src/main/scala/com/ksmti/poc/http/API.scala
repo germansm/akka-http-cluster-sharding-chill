@@ -12,26 +12,27 @@ import java.util.concurrent.TimeUnit
 import akka.event.LoggingAdapter
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.server.Route
+import akka.http.scaladsl.server.{Route, StandardRoute}
 import akka.pattern.ask
 import akka.util.Timeout
 import com.ksmti.poc.actor.PublicEventEntity.{
   AvailableStock,
-  InvalidReservation,
   InvalidEvent,
+  InvalidReservation,
   SuccessReservation
 }
 import com.ksmti.poc.actor.MSP.{
   ConsultProgram,
-  ReservationRequest,
   EventsProgram,
+  ReservationRequest,
   StockRequest
 }
 
-import scala.util.Success
+import scala.util.{Failure, Success}
 import spray.json._
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import com.ksmti.poc.PublicEventsDirectory.PublicEvent
+import com.ksmti.poc.actor.Router.MSPNotFound
 
 trait MessageProtocols extends DefaultJsonProtocol {
   implicit val scalaEventFormat: RootJsonFormat[PublicEvent] = jsonFormat5(
@@ -49,55 +50,69 @@ trait MessageProtocols extends DefaultJsonProtocol {
 
 trait API extends MessageProtocols {
 
+  type ResponseFunction = PartialFunction[Any, StandardRoute]
+
   protected def log: LoggingAdapter
 
   implicit val timeout: Timeout = Timeout(10L, TimeUnit.SECONDS)
 
   protected def router: akka.actor.ActorRef
 
+  private val commonResponse: ResponseFunction ⇒ ResponseFunction = {
+    _.orElse({
+
+      case MSPNotFound ⇒
+        complete(StatusCodes.Gone)
+
+      case InvalidReservation ⇒
+        complete(StatusCodes.EnhanceYourCalm)
+
+      case InvalidEvent ⇒
+        complete(StatusCodes.ImATeapot)
+
+      case whatever ⇒
+        log.warning("Unexpected response [{}]", whatever)
+        complete(StatusCodes.InternalServerError)
+    })
+  }
+
+  private def requestAndThen[T](command: T)(
+      responseFunction: ⇒ ResponseFunction): Route = {
+    onComplete(router ? command) {
+      case Success(result) ⇒
+        commonResponse(responseFunction)(result)
+      case Failure(th) ⇒
+        th.printStackTrace()
+        complete(StatusCodes.InternalServerError)
+    }
+  }
+
   protected def routes: Route =
-    path("upcomingEvents") {
+    path(Segment / "upcomingEvents") { msp ⇒
       get {
-        onComplete(router ? ConsultProgram) {
-
-          case Success(events: EventsProgram) =>
+        requestAndThen(ConsultProgram(msp)) {
+          case events: EventsProgram =>
             complete(events)
-
-          case _ ⇒
-            complete(StatusCodes.InternalServerError)
         }
       }
     } ~
-      path("ticketsStock") {
+      path(Segment / "ticketsStock") { msp ⇒
         parameters("event") { event ⇒
           get {
-            onComplete(router ? StockRequest(event)) {
-
-              case Success(stock: AvailableStock) ⇒
+            requestAndThen(StockRequest(msp, event)) {
+              case stock: AvailableStock ⇒
                 complete(stock)
-
-              case Success(InvalidReservation) ⇒
-                complete(StatusCodes.EnhanceYourCalm)
-
-              case Success(InvalidEvent) ⇒
-                complete(StatusCodes.ImATeapot)
-
-              case whatever ⇒
-                log.warning("Unexpected response [{}]", whatever)
-                complete(StatusCodes.InternalServerError)
             }
           }
         }
       } ~
-      path("reserve" / Segment) { id ⇒
-        post {
-          onComplete(router ? ReservationRequest(id)) {
-
-            case Success(resp: SuccessReservation) ⇒
-              complete(resp)
-
-            case _ ⇒
-              complete(StatusCodes.InternalServerError)
+      path(Segment / "reserveTickets") { msp ⇒
+        parameters("event", "seats".as[Int] ? 1) { (id, seats) ⇒
+          post {
+            requestAndThen(ReservationRequest(msp, id, seats)) {
+              case resp: SuccessReservation ⇒
+                complete(resp)
+            }
           }
         }
       }
