@@ -85,7 +85,7 @@ class MSP(name: String) extends Actor with ActorLogging {
     },
     extractShardId = { _ ⇒
       // see https://manuel.bernhardt.io/2018/02/26/tour-akka-cluster-cluster-sharding/
-      domain
+      ((Math.random() * 100).toInt % 5).toString // Maximum 5 shards
     }
   )
 
