@@ -12,8 +12,10 @@ import akka.pattern.ask
 import akka.testkit.TestKit
 import akka.util.Timeout
 import com.ksmti.poc.PublicEventsDirectory
-import com.ksmti.poc.actor.MSP.{ConsultProgram, EventsProgram}
-import org.scalatest.{AsyncWordSpecLike, BeforeAndAfterAll, Matchers}
+import com.ksmti.poc.actor.EventsManager.{ConsultProgram, EventsProgram}
+import org.scalatest.wordspec.AsyncWordSpecLike
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.matchers.must.Matchers
 
 import scala.concurrent.duration._
 
@@ -42,10 +44,10 @@ class MSPWorkerActorSpec
       )
 
       (workerActor ? ConsultProgram).map {
-        case scalaEvents: EventsProgram ⇒
-          scalaEvents.program.foreach(e ⇒ system.log.debug(e.toString))
+        case scalaEvents: EventsProgram =>
+          scalaEvents.program.foreach(e => system.log.debug(e.toString))
           succeed
-        case _ ⇒
+        case _ =>
           fail()
       }
     }

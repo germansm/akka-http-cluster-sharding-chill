@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2015-2019 KSMTI
+ *  Copyright (C) 2015-2022 KSMTI
  *
  *  <http://www.ksmti.com>
  *
@@ -7,12 +7,12 @@
 
 package com.ksmti.poc.actor
 
-import akka.actor.{Actor, ActorLogging}
+import akka.actor.{ Actor, ActorLogging, Props }
 import com.ksmti.poc.PublicEventsDirectory
-import com.ksmti.poc.actor.PublicEventEntity.{
+import com.ksmti.poc.actor.EventsManager.{
   AvailableStock,
-  InvalidReservation,
   InvalidEvent,
+  InvalidReservation,
   PublicEventStock,
   SeatsReservation,
   SuccessReservation
@@ -20,61 +20,41 @@ import com.ksmti.poc.actor.PublicEventEntity.{
 import org.joda.time.DateTime
 
 object PublicEventEntity {
-
-  object ReservationResponse
-
-  case class SeatsReservation(seats: Int = 1) extends RequestMessage {
-    require(seats > 0)
-  }
-
-  object PublicEventStock extends RequestMessage
-
-  case class AvailableStock(stock: Int, timeStamp: String)
-      extends ResponseMessage
-
-  case class SuccessReservation(reservationID: Long, timeStamp: String)
-      extends ResponseMessage
-
-  object InvalidEvent extends ResponseMessage
-
-  object InvalidReservation extends ResponseMessage
-
+  def props(): Props =
+    Props(new PublicEventEntity())
 }
 
 class PublicEventEntity extends Actor with ActorLogging {
 
-  private lazy val eventID: String = self.path.name
-  protected lazy val domain: String = context.parent.path.name
+  protected lazy val name: String = PublicEventsDirectory.split(self.path.name)(0)
 
-  private lazy val initialStock: Int = PublicEventsDirectory.mspProgram
-    .get(domain)
-    .flatMap(_.get(eventID))
-    .map(_.stock)
-    .getOrElse(0)
+  private lazy val eventID: String = PublicEventsDirectory.split(self.path.name)(1)
+
+  private lazy val initialStock: Int =
+    PublicEventsDirectory.mspProgram.get(name).flatMap(_.get(eventID)).map(_.stock).getOrElse(0)
 
   private var committed: Int = 0
 
   override def receive: Receive = {
-    case _ ⇒
+    case _ =>
       sender() ! InvalidEvent
   }
 
   private lazy val eventBehavior: Receive = {
 
-    case PublicEventStock ⇒
-      sender() ! AvailableStock(initialStock - committed,
-                                DateTime.now.toDateTimeISO.toString())
+    case PublicEventStock =>
+      sender() ! AvailableStock(initialStock - committed, DateTime.now.toDateTimeISO.toString())
 
-    case SeatsReservation(seats) if initialStock >= committed + seats ⇒
+    case SeatsReservation(seats) if initialStock >= committed + seats =>
       committed += seats
-      sender() ! SuccessReservation(DateTime.now().getMillis,
-                                    DateTime.now.toDateTimeISO.toString())
+      sender() ! SuccessReservation(DateTime.now().getMillis, DateTime.now.toDateTimeISO.toString())
 
-    case _: SeatsReservation ⇒
+    case _: SeatsReservation =>
       sender() ! InvalidReservation
   }
 
   override def preStart(): Unit = {
+    log.info("PublicEventEntity preStart [{}] [{}] [{}]", name, eventID, DateTime.now)
     if (initialStock > 0) {
       context.become(eventBehavior)
     }
